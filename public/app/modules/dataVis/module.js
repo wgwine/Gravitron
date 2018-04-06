@@ -5,11 +5,11 @@ angular.module('App.dataVis')
         ,
         function ($scope, $rootScope, $window, $http, $interval, $timeout) {
             $scope.showControls = true;
-            const g_const = .003; //how fast acceleration turns to velocity
+            const g_const = .002; //how fast acceleration turns to velocity
             var particleList = [];
             var particleShift = [0, 0];
             var maxMass = 50000000; //black hole mass
-            var nodeCount = 4000;
+            var nodeCount = 1000;
             const gpu = new GPU();
             var context;
 
@@ -41,93 +41,102 @@ angular.module('App.dataVis')
             $timeout(function () {
                 $scope.generateProto();
             }, 50);
+            const cpuCalc = function () {
+                var newParts=[];
+                for (var e = 0; e < particleList.length; e++) {
+                    var thisParticle = particleList[e];
 
-            const matMult = gpu.createKernel(function (x, y, m) {
-                var acc = 0;
-                var x1 = x[this.thread.x];
-                var y1 = y[this.thread.x];
 
-                for (let i = 0; i < this.constants.size; i++) {
-                    if (i != this.thread.x) {
-                        var xd = x1 - x[i];
-                        var yd = y1 - y[i];
-                        var distance = Math.sqrt(xd * xd + yd * yd);
+                        for (var s = 0; s < particleList.length; s++) {
+                            var otherParticle = particleList[s];
+                            if (thisParticle != otherParticle && !thisParticle.collided && !otherParticle.collided) {
+                                var xd = otherParticle.x - thisParticle.x;
+                                var yd = otherParticle.y - thisParticle.y;
 
-                        var p = m[i] / (distance * distance);
-                        if (this.thread.y == 0) {
-                            acc -= (p * xd) / (distance);
-                        } else if (this.thread.y == 1) {
-                            acc -= (p * yd) / (distance);
-                        } else if (this.thread.y == 2) {
-                            var radius = Math.log(this.constants.e + m[this.thread.x] / 1e3);
-                            var oradius = Math.log(this.constants.e + m[i] / 1e3);
+                                var distance = Math.sqrt(xd * xd + yd * yd);
 
-                            // if (distance <200) { whoa
-                            //     return i;
-                            // }else {
-                            //     return -1;
-                            // }
-                            if (distance < radius + oradius) {
-                                return i;
-                            } else {
-                                return -1;
+                                var d2 = distance * distance;
+
+                                if (distance * 4 < thisParticle.radius + otherParticle.radius) {
+                                    thisParticle.collided = true;
+                                    otherParticle.collided = true;
+                                    var l = thisParticle.mass + otherParticle.mass;
+                                    var d = new Particle(l,
+                                        (thisParticle.x * thisParticle.mass + otherParticle.x * otherParticle.mass) / l,
+                                        (thisParticle.y * thisParticle.mass + otherParticle.y * otherParticle.mass) / l,
+                                        (thisParticle.vx * thisParticle.mass + otherParticle.vx * otherParticle.mass) / l,
+                                        (thisParticle.vy * thisParticle.mass + otherParticle.vy * otherParticle.mass) / l
+                                    );
+                                    d.new = 1;
+                                    newParts.push(d)
+                                }
+                                var p = ((otherParticle.mass) / ((d2)));
+                                thisParticle.ax += p * xd / (distance);
+                                thisParticle.ay += p * yd / (distance);
+
+                                var p2 = ((thisParticle.mass) / ((d2)));
+                                otherParticle.ax -= p2 * xd / (distance);
+                                otherParticle.ay -= p2 * yd / (distance);
                             }
-                        }
+                        
                     }
                 }
-                return acc;
-            }, {
-                    constants: { size: nodeCount, e: Math.E }
-                }).setOutput([nodeCount, 3]);
+                return newParts;
+            }
+
 
             function integrate() {
                 if (particleList.length) {
-
+                    var newParticles = [];
                     var lengthHold = particleList.length;
                     let gpures;
 
-                    if (lengthHold > 1) {
-                        var xs = [];
-                        var ys = [];
-                        var ms = [];
-                        for (var e = 0; e < nodeCount; e++) {
-                            var p = particleList[e];
-                            xs.push(p.x);
-                            ys.push(p.y);
-                            ms.push(p.mass);
-                        }
-                        gpuResult = matMult(xs, ys, ms);
-                    }
+                    // if (lengthHold > 1) {
+                    //     var xs = [];
+                    //     var ys = [];
+                    //     var ms = [];
+                    //     for (var e = 0; e < nodeCount; e++) {
+                    //         var p = particleList[e];
+                    //         xs.push(p.x);
+                    //         ys.push(p.y);
+                    //         ms.push(p.mass);
+                    //     }
+                    //     gpuResult = matMult(xs, ys, ms);
+                    // }
 
-                    var newParticles = [];
-                    //set acceleration on the actual objects
-                    //for detected collisions, create a new child object and mark the parents for deletion
-                    for (var e = 0; e < lengthHold; e++) {
-                        var thisParticle = particleList[e];
-                        try {
-                            thisParticle.ax = gpuResult[0][e];
-                            thisParticle.ay = gpuResult[1][e];
-                        } catch (er) {
-                            console.log(er + ": " + e);
-                        }
-                        // layer 3 of gpu result has collision indices
-                        if (gpuResult[2][e] > -1) {
-                            var otherParticle = particleList[gpuResult[2][e]];
-                            thisParticle.collided = true;
-                            otherParticle.collided = true;
-                            var l = thisParticle.mass + otherParticle.mass;
-                            //conserve momentum
-                            var d = new Particle(l,
-                                (thisParticle.x * thisParticle.mass + otherParticle.x * otherParticle.mass) / l,
-                                (thisParticle.y * thisParticle.mass + otherParticle.y * otherParticle.mass) / l,
-                                (thisParticle.vx * thisParticle.mass + otherParticle.vx * otherParticle.mass) / l,
-                                (thisParticle.vy * thisParticle.mass + otherParticle.vy * otherParticle.mass) / l
-                            );
-                            //visual flash on collide
-                            d.new = 1;
-                            newParticles.push(d);
-                        }
-                    }
+
+                    // //set acceleration on the actual objects
+                    // //for detected collisions, create a new child object and mark the parents for deletion
+                    // for (var e = 0; e < lengthHold; e++) {
+                    //     var thisParticle = particleList[e];
+                    //     try {
+                    //         thisParticle.ax = gpuResult[0][e];
+                    //         thisParticle.ay = gpuResult[1][e];
+                    //     } catch (er) {
+                    //         console.log(er + ": " + e);
+                    //     }
+                    //     // layer 3 of gpu result has collision indices
+                    //     if (gpuResult[2][e] > -1) {
+                    //         var otherParticle = particleList[gpuResult[2][e]];
+                    //         thisParticle.collided = true;
+                    //         otherParticle.collided = true;
+                    //         var l = thisParticle.mass + otherParticle.mass;
+                    //         //conserve momentum
+                    //         var d = new Particle(l,
+                    //             (thisParticle.x * thisParticle.mass + otherParticle.x * otherParticle.mass) / l,
+                    //             (thisParticle.y * thisParticle.mass + otherParticle.y * otherParticle.mass) / l,
+                    //             (thisParticle.vx * thisParticle.mass + otherParticle.vx * otherParticle.mass) / l,
+                    //             (thisParticle.vy * thisParticle.mass + otherParticle.vy * otherParticle.mass) / l
+                    //         );
+                    //         //visual flash on collide
+                    //         d.new = 1;
+                    //         newParticles.push(d);
+                    //     }
+                    // }
+
+
+                    newParticles = cpuCalc();
+                    
                     //destroy particles that stray too far
                     for (var m = 0; m < particleList.length; m++) {
                         var xf = width / 2 - particleList[m].x;
@@ -161,7 +170,8 @@ angular.module('App.dataVis')
                         pm.vy += pm.ay * g_const;
                         pm.x += (pm.vx * g_const) + particleShift[0];
                         pm.y += (pm.vy * g_const) + particleShift[1];
-
+                        pm.ax=0;
+                        pm.ay=0;
                         //bounce off walls
                         // if (pm.x < 0 || pm.x > width) {
                         //     pm.vx = -1 * pm.vx;
@@ -208,12 +218,12 @@ angular.module('App.dataVis')
                 var d = Math.sqrt(x * x + y * y);
                 //play with velicity calculation to get orbital velocity correct
                 //var particle = new Particle(1000 / rand2, width / 2 + x, height / 2 + y, (200000 * y) / (d * d), (-x * 200000) / (d * d));
-                // var particle = new Particle(rand3, width / 2 + x, height / 2 + y, (y * (40000)) / (d * d), (-x * (40000)) / (d * d));
-                var particle = new Particle(mass || rand3, width / 2 + x, height / 2 + y, (y) / (d * (.003)), (-x) / (d * (.003)));
+                 var particle = new Particle(rand3, width / 2 + x, height / 2 + y, (y * (40000)) / (d * d), (-x * (40000)) / (d * d));
+                //var particle = new Particle(mass || rand3, width / 2 + x, height / 2 + y, (y) / (d * (.03)), (-x) / (d * (.03)));
                 particleList.push(particle);
             }
 
-            $scope.draw = function() {
+            $scope.draw = function () {
                 if (!$scope.showPaths)
                     context.clearRect(0, 0, width, height);
 
@@ -326,8 +336,8 @@ angular.module('App.dataVis')
                         window.setTimeout(callback, 1000 / 60);
                     };
             })();
-                (function animloop() {
-                    requestAnimFrame(animloop);
-                    $scope.draw();
-                })();
+            (function animloop() {
+                requestAnimFrame(animloop);
+                $scope.draw();
+            })();
         }]);
