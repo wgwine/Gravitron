@@ -1,0 +1,43 @@
+{
+  "name": "gravitron",
+  "version": "0.0.0",
+  "description": "Data visualization application",
+  "main": "server.js",
+  "author": "William Wine",
+  "scripts": {
+    "startsimple": "node server.js",
+    "start": "npm run dev",
+    "build": "gulp",
+    "watch": "gulp dev",
+    "dev": "concurrently  \"npm run startsimple\" \"npm run watch\""
+  },
+  "dependencies": {
+    "angular": "^1.6.5",
+    "angular-route": "^1.6.5",
+    "body-parser": "^1.17.2",
+    "compression": "^1.7.0",
+    "express": "^4.15.3",
+    "fast-csv": "^2.4.1",
+    "gulp": "^3.9.1",
+    "gulp-concat": "^2.6.1",
+    "gulp-if": "^2.0.2",
+    "gulp-livereload": "^3.8.1",
+    "gulp-sass": "^3.1.0",
+    "gulp-uglify": "^3.0.0",
+    "gulp-uglifycss": "^1.0.8",
+    "gulp-watch": "^4.3.11",
+    "jquery": "^3.2.1",
+    "js-md5": "^0.4.2",
+    "lodash": "^4.17.4",
+    "merge-stream": "^1.0.1",
+    "method-override": "^2.3.9",
+    "moment": "^2.18.1",
+    "node-uuid": "^1.4.8",
+    "pm2": "^2.6.1",
+    "pump": "^1.0.2"
+  },
+  "devDependencies": {
+    "concurrently": "^3.5.0",
+    "gulp-uglify-es": "^0.1.4"
+  }
+}

@@ -1,0 +1,27 @@
+﻿<div ng-controller="dataVisGraphCtrl" id="framer">
+    <canvas id="canvas" style="z-index:-1;position:absolute;left: 0px;top: 0px;"></canvas>
+    <div class="controls" ng-if="showControls">
+        <div class="noselect">
+            <div id="controlbox" style="z-index:4">
+                <div class="handle"></div>
+                <button ng-click="start()">Start</button>
+                </br>
+                <button ng-click="stop()">Stop</button>
+                </br>
+                <button ng-click="generateProto()">Protodisk</button>
+                </br>
+                <button ng-click="clearCanvas()">Clear</button>
+                </br>
+                <button ng-click="togglePaths()">History</button>
+                </br>
+                <button ng-click="stablize()">Stablilize</button>
+                </br>
+                <button ng-click="tails()">Tails</button>
+                </br>
+            </div>
+        </div>
+    </div>
+    <div class="controls" ng-if="!showControls">
+        <div class="control-group"><h4>Loading Data...</h4></div>
+    </div>
+</div>
