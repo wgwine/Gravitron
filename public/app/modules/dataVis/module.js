@@ -1,5 +1,16 @@
 ﻿
-
+function Particle(t, s, h, i, o) {
+    this.mass = t;
+    this.x = s;
+    this.y = h;
+    this.vx = i;
+    this.vy = o;
+    this.ax = 0;
+    this.ay = 0;
+    this.new = 0;
+    this.collided = false;
+    this.radius = Math.log(Math.E + t / 3e3);
+}
 angular.module('App.dataVis')
     .controller('dataVisGraphCtrl', ['$scope', '$rootScope', '$window', '$http', '$interval', '$timeout'
         ,
@@ -8,18 +19,20 @@ angular.module('App.dataVis')
             const g_const = .001; //how fast acceleration turns to velocity
             var particleList = [];
             var particleShift = [0, 0];
-            var maxMass = 10000000; //black hole mass
-            var nodeCount = 4001;
+            var maxMass = 100000000; //black hole mass
+            var nodeCount =4000;
             const gpu = new GPU();
             var context;
             var force;
             var color_scale = () => 0;
             var icolor = [];
-            for (let j = 0; j < 7; j++) {
-                icolor[j] = ((maxMass/10) / 7) * j
+            for (let j = 0; j < 8; j++) {
+                icolor[j] = ((maxMass) / 8) * j
             }
-            color_scale = d3.scaleLinear().domain(icolor).range(['#646FFC', '#8D95FF', '#CACDFF', '#FFFFFF', '#FFF568', '#FFA952', '#FF6543']);
-
+            color_scale = d3.scaleLinear().domain(icolor).range([]);
+            color_scale = d3.scaleLinear()
+                .domain(d3.ticks(0, maxMass, 10))
+                .range(['#3344aa', '#646FFC', '#8D95FF', '#CACDFF', '#FFFFFF', '#FFF568', '#FFA952', '#FF6543']);
             var canvas = document.getElementById("canvas");
 
             canvas.width = window.innerWidth;
@@ -29,260 +42,155 @@ angular.module('App.dataVis')
             context = canvas.getContext("2d");
 
 
-            force = d3.forceSimulation().velocityDecay(-.0001)                
-
-              
-            .force("gravity", d3.forceManyBody().strength(function (d) {
-                return .0000008* d.mass;
-            }))
-          
-
-
+            force = d3.forceSimulation().velocityDecay(0.00001)
+                .force("gravity", d3.forceManyBody().strength(function (d) {
+                    return .5;
+                }))
 
             var interval = -1;
-            interval = window.setInterval(integrate, 5);
+            interval = window.setInterval(integrate, 25);
+            var interval2 = window.setInterval(collide, 25);
             $scope.start = function () {
                 if (interval == -1) {
-                    interval = window.setInterval(integrate, 5);
+                    interval = window.setInterval(integrate, 25);
                 }
             }
             $scope.stop = function () {
                 clearInterval(interval);
                 interval = -1;
             }
-            $timeout(function () {
-                $scope.generateProto();
-            }, 50);
 
-            const matMult = gpu.createKernel(function (a, b, c) {
-                var acc = 0;
-                var x1 = a[this.thread.x];
-                var y1 = b[this.thread.x];
 
-                for (let i = 0; i < this.constants.size; i++) {
-                    if (i != this.thread.x) {
-                        var xd = x1 - a[i];
-                        var yd = y1 - b[i];
-                        var distance = Math.sqrt(xd * xd + yd * yd);
-                        if (distance > 0) {
-                            var p = c[i] / (distance * distance);
-                            if (this.thread.y == 0) {
-                                acc -= (p * xd) / (distance);
-                            } else if (this.thread.y == 1) {
-                                acc -= (p * yd) / (distance);
-                            } else if (this.thread.y == 2) {
-                                var radius = Math.log(this.constants.e + c[this.thread.x] / 1e3);
-                                var oradius = Math.log(this.constants.e + c[i] / 1e3);
-                                if (distance < radius + oradius) {
-                                    return i;
+
+
+            const cpuCalc = function () {
+                var newParts = [];
+                for (var e = 0; e < particleList.length; e++) {
+                    if (Math.random()>.75){
+                    var thisParticle = particleList[e];
+                    var xd = width/2 - thisParticle.x;
+                    var yd = height/2 - thisParticle.y;
+                    var ds = Math.sqrt(xd * xd + yd * yd);
+                    // if (ds > 2000) {
+                    //     thisParticle.collided = true;
+
+                    // }
+                    if (ds < 2000 ) {
+                        for (var s = e; s < particleList.length; s++) {
+                            var otherParticle = particleList[s];
+                            if (thisParticle != otherParticle && !thisParticle.collided && !otherParticle.collided) {
+                                var xd = otherParticle.x - thisParticle.x;
+                                var yd = otherParticle.y - thisParticle.y;
+                                var distance = Math.sqrt(xd * xd + yd * yd);
+                                if (distance < thisParticle.radius + otherParticle.radius) {
+                                    thisParticle.collided = true;
+                                    otherParticle.collided = true;
+                                    var l = thisParticle.mass + otherParticle.mass;
+                                    var d = new Particle(l,
+                                        (thisParticle.x * thisParticle.mass + otherParticle.x * otherParticle.mass) / l,
+                                        (thisParticle.y * thisParticle.mass + otherParticle.y * otherParticle.mass) / l,
+                                        (thisParticle.vx * thisParticle.mass + otherParticle.vx * otherParticle.mass) / l,
+                                        (thisParticle.vy * thisParticle.mass + otherParticle.vy * otherParticle.mass) / l
+                                    );
+                                    d.new = .1;
+                                    newParts.push(d)
                                 }
                             }
                         }
+                    }else{
+                        thisParticle.collided = true;
                     }
                 }
-                return acc;
-            }, {
-                    constants: { size: nodeCount, e: Math.E }
-                }).setOutput([nodeCount, 3]);
-
-                const cpuCalc = function () {
-                    var newParts=[];
-                    for (var e = 1; e < particleList.length; e++) {
-                        var thisParticle = particleList[e];
-                        if(Math.random()>.55){
-    
-                            for (var s = 1; s < particleList.length; s++) {
-                                var otherParticle = particleList[s];
-                                if (thisParticle != otherParticle && !thisParticle.collided && !otherParticle.collided) {
-                                    var xd = otherParticle.x - thisParticle.x;
-                                    var yd = otherParticle.y - thisParticle.y;    
-                                    var distance = Math.sqrt(xd * xd + yd * yd);    
-                                    var d2 = distance * distance;
-    
-                                    if (distance*3 < thisParticle.radius + otherParticle.radius) {
-                                        thisParticle.collided = true;
-                                        otherParticle.collided = true;
-                                        var l = thisParticle.mass + otherParticle.mass;
-                                        var d = new Particle(l,
-                                            (thisParticle.x * thisParticle.mass + otherParticle.x * otherParticle.mass) / l,
-                                            (thisParticle.y * thisParticle.mass + otherParticle.y * otherParticle.mass) / l,
-                                            (thisParticle.vx * thisParticle.mass + otherParticle.vx * otherParticle.mass) / l,
-                                            (thisParticle.vy * thisParticle.mass + otherParticle.vy * otherParticle.mass) / l
-                                        );
-                                        d.new = 1;
-                                        newParts.push(d)
-                                    }
-
-                                }
-                            }
-                            
-                        }
-                    }
-                    return newParts;
                 }
-            function integrate() {
+                return newParts;
+            }
+            var integrating = false;
 
+            function collide() {
                 if (particleList.length) {
+                    var newParticles = [];
                     newParticles = cpuCalc();
-                    
- 
                     particleList = particleList.filter((p) => {
                         return !p.collided;
                     }).concat(newParticles);
-
                     force.nodes(particleList);
-                    particleList= force.nodes();
-                    var lengthHold = particleList.length;
+                    var c=0;
+                    while (particleList.length < nodeCount &&c<1000) {
+                        generateItem(1000);
+                        c++;
+                    }
+
+                }
+            }
+            function integrate() {
+
+                if (!integrating && particleList.length) {
+                    integrating = true;
                     let gpures;
 
-                    // if (particleList.length > 1) {
-                    //     var xs = [];
-                    //     var ys = [];
-                    //     var ms = [];
-                    //     for (var e = 0; e < particleList.length; e++) {
-                    //         var p = particleList[e];
-                    //         xs.push(p.x);
-                    //         ys.push(p.y);
-                    //         ms.push(p.mass);
-                    //     }
-                    //     //gpuResult = superKernel(xs, ys, ms);
-                    //     //gpuResult = matMult(xs, ys, ms);
-                    // }
-
-                    var newParticles = [];
-                    //set acceleration on the actual objects
-                    //for detected collisions, create a new child object and mark the parents for deletion
-                    // for (var e = 0; e < particleList.length; e++) {
-                    //     var thisParticle = particleList[e];
-                    //     thisParticle.ax = gpuResult[0][e];
-                    //     thisParticle.ay = gpuResult[1][e];
-                    // }
-                    //for (var m = 0; m < particleList.length; m++) {
-                        //convert acceleration into velocity and velocity into position
-                        //offset everything to keep centered
-                        // var pm = particleList[m];
-                        // pm.vx += pm.ax * g_const;
-                        // pm.vy += pm.ay * g_const;
-                        // pm.x += (pm.vx * g_const) + particleShift[0];
-                        // pm.y += (pm.vy * g_const) + particleShift[1];
-
-                        //bounce off walls
-                        // if (pm.x < 0 || pm.x > width) {
-                        //     pm.vx = -1 * pm.vx;
-                        // }
-                        // if (pm.y < 0 || pm.y > height) {
-                        //     pm.vy = -1 * pm.vy;
-                        // }
-                    //}
-                    // for (var e = 1; e < particleList.length; e++) {
-
-
-                    //     // layer 3 of gpu result has collision indices
-                    //     if (gpuResult[2][e] > 0) {
-                    //         var thisParticle = particleList[e];
-                    //         thisParticle.ax = gpuResult[0][e];
-                    //         thisParticle.ay = gpuResult[1][e];
-                    //         var otherParticle = particleList[gpuResult[2][e]];
-                    //         thisParticle.collided = true;
-                    //         otherParticle.collided = true;
-                    //         var l = thisParticle.mass + otherParticle.mass;
-                    //         //conserve momentum
-                    //         var d = new Particle(l,
-                    //             (thisParticle.x * thisParticle.mass + otherParticle.x * otherParticle.mass) / l,
-                    //             (thisParticle.y * thisParticle.mass + otherParticle.y * otherParticle.mass) / l,
-                    //             (thisParticle.vx * thisParticle.mass + otherParticle.vx * otherParticle.mass) / l,
-                    //             (thisParticle.vy * thisParticle.mass + otherParticle.vy * otherParticle.mass) / l
-                    //         );
-                    //         //visual flash on collide
-                    //         d.new = 1;
-                    //         newParticles.push(d);
-                    //     }
-                    // }
-                    //destroy particles that stray too far
-                    // particleList = particleList.filter((p) => {
-                    //     return !p.collided;
-                    // }).concat(newParticles);
-
-                    for (var m = 1; m < particleList.length; m++) {
-                        var xf = width / 2 - particleList[m].x;
-                        var yf = height / 2 - particleList[m].y;
-                        particleList[m].collided = Math.sqrt(xf * xf + yf * yf) > height * 2;
-                    }
-                    particleList = particleList.filter((p) => {
-                        return !p.collided;
-                    })
+                   
+                     force.alphaTarget(.21);
                     // //centerify the largest object when stabilization enabled
                     var largest = null;
                     if ($scope.stabilizer && particleList.length > 0) {
                         largest = particleList[0]
                         for (var m = 0; m < particleList.length; m++) {
-                            if (particleList[m].mass > largest.mass) {
-                                largest = particleList[m];
+                            var pm=particleList[m];
+                            if (pm.mass > largest.mass) {
+                                largest = pm;
                             }
+                            // if (pm.x < 0 || pm.x > width) {
+                            //     pm.vx = -1 * pm.vx;
+                            // }
+                            // if (pm.y < 0 || pm.y > height) {
+                            //     pm.vy = -1 * pm.vy;
+                            // }
+
                         }
                         particleShift[0] = (width / 2 - largest.x);
                         particleShift[1] = (height / 2 - largest.y);
                         largest.vx = 0;
                         largest.vy = 0;
+
                     }
-
-
-
                     //repopulate to make up for deleted objects.
                     //to avoid rebinding the gpu kernel, I am keeping this number constant every cycle(for now)
-                     while (particleList.length > 0 && particleList.length < nodeCount-1000) {
-                        generateItem2(1000);
-                     }
+
                     particleShift = [0, 0];
-                }                force.alpha(1);
+                    integrating = false;
+                    
+                }
             }
 
             var firstrun = true;
             $scope.generateProto = function (count) {
                 //create the black hole first
-                if (firstrun) {
-                    var particle = new Particle(maxMass, canvas.width / 2, canvas.height / 2, 0, 0);
-                    particleList.push(particle);
-                    firstrun = false;
-                }
+                // if (firstrun) {
+                //     var particle = new Particle(maxMass, canvas.width / 2, canvas.height / 2, 0, 0);
+                //     particleList.push(particle);
+                //     firstrun = false;
+                // }
                 var leng = particleList.length;
                 for (var i = 0; i < (count || (nodeCount - leng)); i++) {
                     generateItem();
                 }
-                // var particle = new Particle(maxMass / 2, width / 2, height / 2, 0, 0);
-                // particleList.push(particle);
-                // particle = new Particle(maxMass / 3, (width / 2) -50, height / 2, 0, 0);
-                // particleList.push(particle);
             }
-            function generateItem2(mass) {
-                var rand = Math.random() * 2 * Math.PI;
-                var rand2 = .05 + Math.random(); // dont create particles dead center
-                var rand3 = 1000 * Math.random(); //randomized mass 
-                //create them in a circle of radius=width, apply shift to always create around center screen
-                var x = ((height) * rand2) * Math.cos(rand);
-                var y = ((height) * rand2) * Math.sin(rand);
-                var d = Math.sqrt(x * x + y * y);
-                //play with velicity calculation to get orbital velocity correct
-                //var particle = new Particle(1000 / rand2, width / 2 + x, height / 2 + y, (200000 * y) / (d * d), (-x * 200000) / (d * d));
-                //var particle = new Particle(rand3, width / 2 + x, height / 2 + y, (y * (4000)) / (d * d), (-x * (4000)) / (d * d));
-                var particle = new Particle( mass || rand3 , width / 2 + x, height / 2 + y , (y) / (d *2 ), (-x) / (d*2 ));
-                //if (mass)
-                //particle.new = 1;
+            $scope.generateProto();
 
-                particleList.push(particle);
-            }
+
             function generateItem(mass) {
                 var rand = Math.random() * 2 * Math.PI;
-                var rand2 = .05 + Math.random(); // dont create particles dead center
-                var rand3 = 10000 * Math.random(); //randomized mass 
+                var rand2 = Math.random(); // dont create particles dead center
+                var rand3 = (mass||100 )* Math.random(); //randomized mass 
                 //create them in a circle of radius=width, apply shift to always create around center screen
-                var x = ((height) * rand2) * Math.cos(rand);
-                var y = ((height) * rand2) * Math.sin(rand);
+                var x = ((height) * rand2) * Math.sin(rand);
+                var y = ((height) * rand2) * Math.cos(rand);
                 var d = Math.sqrt(x * x + y * y);
                 //play with velicity calculation to get orbital velocity correct
                 //var particle = new Particle(1000 / rand2, width / 2 + x, height / 2 + y, (200000 * y) / (d * d), (-x * 200000) / (d * d));
-                //var particle = new Particle(rand3, width / 2 + x, height / 2 + y, (y * (4000)) / (d * d), (-x * (4000)) / (d * d));
-                var particle = new Particle( mass || rand3 , width / 2 + x, height / 2 + y , (y) / (d *2 ), (-x) / (d/2 ));
+                //var particle = new Particle(mass|| rand3, width / 2 + x, height / 2 + y, d * y, d * -x);
+                var m= rand3;
+                var particle = new Particle(m, width / 2 + x, height / 2+y, (2*Math.PI * y)*(.0001 *d), (2*Math.PI * -x)*(.0001 *d));
                 //if (mass)
                 //particle.new = 1;
 
@@ -314,48 +222,66 @@ angular.module('App.dataVis')
                 context.shadowOffsetX = 0;
                 context.shadowOffsetY = 0;
                 for (var t = 0; t < particleList.length; t++) {
+                    
                     var e = particleList[t];
+                    if(e.mass>2000){
                     // don't draw objects that are outside the frame
                     if (e.x > 0 && e.x < width && e.y > 0 && e.y < height) {
-                        //make particle a little bigger if it is new
-                        var addon = 3;  //changing this scales particles sizes visually
-                        if (e.new > 0.1 && !window.showPaths) {
-                            addon = e.new * 12;
-                        }
-                        context.beginPath();
-                        context.arc(e.x, e.y, e.radius / (addon), 0, 2 * Math.PI);
-                        context.closePath();
                         context.fillStyle = color_scale(e.mass);
+                        //make particle a little bigger if it is new
+                        var addon = 0;  //changing this scales particles sizes visually
+
+                        if (e.new>0 && !window.showPaths) {
+                            addon = e.new/20;
+                            context.globalAlpha = .25;
+                            context.fillStyle = "#fff";
+                            if (e.new > 5){
+                                e.new =0;
+                                }
+                        }
+                        addon = e.new;
+                        context.beginPath();
+                        context.arc(e.x, e.y, e.radius*(addon+1), 0, 2 * Math.PI);
+                        context.closePath();
+
                         //don't waste time on blur unless it is a larger particle
-                        if (e.mass >= 15000) {
+                        if (e.mass >= 1500) {
                             context.shadowColor = color_scale(e.mass);
                             context.shadowBlur = 7;
                         }
                         //make it look like a black hole
                         if (e.mass >= maxMass) {
                             context.globalAlpha = 1;
+                            context.shadowBlur = 0;
                             context.fillStyle = "#000";
                             context.shadowColor = '#F5EFF3';//color_scale(e.mass);
                         }
-
+                        
                         context.fill();
+                        
+                        if (e.new>0 && !window.showPaths) {
+                            context.shadowBlur = 5*e.new;   
+                            context.fill();
+                            context.shadowBlur = 0;
+                        }
                         //turn blur off if we turned it on
-                        if (e.mass >= 15000) {
+                        if (e.mass >= 1500) {
                             context.shadowBlur = 0;
                         }
                         // a light outline for the black hole and then reset alpha
                         if (e.mass >= maxMass) {
-                            context.globalAlpha = .3;
-                            context.strokeStyle = "#F4FFFB";
-                            context.stroke();
-                            context.globalAlpha = 1;
+                            // context.globalAlpha = .3;
+                            // context.strokeStyle = "#F4FFFB";
+                            // context.stroke();
+                            // context.globalAlpha = 1;
                         }
                         //particle will be slightly bigger next time, unless we hit 0 here
                         if (e.new > 0) {
-                            e.new -= .1;
+                            e.new += 3;
                         }
                     }
                 }
+            }
                 context.fillStyle = "#aaa";
             }
 
@@ -375,12 +301,12 @@ angular.module('App.dataVis')
             }
 
             $scope.clearCanvas = function () {
-                particleList = [];
+                particleList.length=1;
             }
 
             window.tailLength = 0;
             $scope.tails = function () {
-                window.tailLength = !window.tailLength ? .01 : 0;
+                window.tailLength = !window.tailLength ? 3 : 0;
             }
 
             $scope.makeid = function () {
